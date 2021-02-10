@@ -1,0 +1,165 @@
+<html>
+	<head>
+		<title>Neural Car</title>
+		
+		<link href="style.css" rel="stylesheet" />
+		<link href='http://fonts.googleapis.com/css?family=Orbitron:700' rel='stylesheet' type='text/css'>
+		<link href='http://fonts.googleapis.com/css?family=Arapey' rel='stylesheet' type='text/css'>
+		<link rel="stylesheet" href="projects.css" />
+		<meta property="og:image" content="" />
+		<script src="NeuralCar.js"></script>
+		<script src="SAT.js"></script>
+		<script src="settings.js"></script>
+		<script>
+			var ga = ga || function () {};
+			var neuralCarSettingsObject = {
+				cars: {type: "number", value: 100, min: 0, help: "Amount of cars."},
+				useRegex: {type: "switch", value: false, help: "Use a regex instead of a neural network."},
+				runSpeed: {type: "float", value: 1, help: "How fast the simulation runs (higher than 10 is not advisable unless you have a very strong overclocked cpu)"},
+				stepSize: {type: "number", value: Math.round(1000 / 15), min: 1, help: "Ms per physics frame"},
+				generationTime: {type: "number", value: 15000, min: 1, help: "Ms per generation"},
+				mutationRate: {type: "float", value: 1.4, help: "Rate at which the brains mutate and differentiate from the top cars (can be negative)"},
+				boardWidth: {type: "number", value: 850, min: 50, help: "Width of the board"},
+				boardHeight: {type: "number", value: 550, min: 50, help: "Height of the board"},
+				retireAfterGenerations: {type: "number", value: 30, min: 0, help: "Amount of generations a car has to be in the top before turning purple and being considered 'mature'"},
+				keepTop: {type: "float", value: 0.1, help: "Value between 0 and 1, 1 = all cars become top, 0 = none, 0.1 = 10%, 0.2 = 20%, etc."},
+				minimumMutation: {type: "float", value: 0.01, help: "Minimum value of a bias/weight when mutating."},
+				collision: {type: "switch", value: false, help: "Do the cars collide or can they drive over eachother? Collision reduces the performance to about 50% (!)"},
+				cantKeepUp: {type: "number", value: 4, min: 1, help: "Adjust runSpeed when this amount of frames in a row are calculated slower than stepSize"},
+				maxRunspeed: {type: "switch", value: false, help: "Should the simulation try to get the runspeed to be as high as possible?"},
+				ai: {
+					category: true,
+					type: {type: "text", value: "blockVision", help: "Currently only the 'blockVision' ai has been implemented.", disabled: true},
+					blockLength: {type: "number", value: 80, min: 1, help: "Amount of pixels that cars will see in their front/backward direction"},
+					blockWidth: {type: "number", value: 60, min: 1, help: "Amount of pixels that a car will see at their sides"},
+					blockLengthCount: {type: "number", value: 8, min: 1, help: "Amount of dots in the front/backward direction that the car will use to determine if a pixel is grass or road."},
+					blockWidthCount: {type: "number", value: 6, min: 1, help: "Amount of dots in the sideward direction that the car will use to see which pixels are grass and which are road."},
+					front: {type:"float", value: 0.75, help: "Value between 0 and 1 of how many of the blockVision is in the front, 0.5 = half of the block of pixels is in the front."},
+					side: {type: "float", value: 0.5, help: "Value between 0 and 1 of how many pixels are on the left of the car"}
+				},
+				car: {
+					category: true,
+					width: {type: "number", value: 10, min: 1, help: "Width of the car in pixels"},
+					length: {type: "number", value: 20, min: 1, help: "Length of the car in pixels"},
+					color: {type: "color", value: "#FF0000", help: "Css color of the car"},
+					maxSpeed: {type: "float", value: 0.075, help: "Max speed a car can go in pixels per ms"},
+					maxAcceleration: {type: "float", value: 0.00005, help: "Max acceleration in pixels per ms per ms"},
+					maxTurnAngle: {type: "float", value: Math.PI / 1800, help: "Turnability of the car in radians per ms"},
+					averageWidth: {type: "number", value: 2, min: 1, help: "Amount of dots, width wise, used to determine how much of the car is on grass/road"},
+					averageHeight: {type: "number", value: 4, min: 1, help: "Amount of dots, height wise, used to determine how much of the car is on grass/road"}
+				},
+				board: {
+					category: true,
+					streetWidth: {type: "float", value: 4.5, min: 1, help: "Width of the street relative to the car width."}
+				},
+				brain: {
+					category: true,
+					structure: {type: "array", arrayType: "number", value: [42], help: "Hidden layers of the network"}
+				},
+				debugging: {
+					category: true,
+					drawAveragePixels: {type: "switch", value: false, help: "Draw the pixels used for the detection of the max speed (leaves a trail where cars have driven)"},
+					drawVisionPixels: {type: "switch", value: false, help: "Draw the pixels that a car uses for vision (blockVision)"},
+					playerCar: {type: "switch", value: false, help: "Add a user controllable car"}
+				}
+			};
+			function startup () {
+				document.getElementById("settings").appendChild(SQUARIFIC.settings.init(neuralCarSettingsObject, 'Start Simulation', function (settings) {
+					if (typeof ga === "function") {
+						ga("send", "event", "neuralcar", "neuralcar-2-simulation-start");
+					}
+					SQUARIFIC.neuralCar = new SQUARIFIC.NeuralCar(document.getElementById('backCanvas'), document.getElementById('frontCanvas'), document.getElementById("console"), settings);
+					var settingsDiv = document.getElementById("settings");
+					settingsDiv.parentNode.removeChild(settingsDiv);
+					document.getElementById('runSpeed-input').value = parseFloat(settings.runSpeed);
+					var m = document.getElementById('maxRunspeed-input');
+					if (settings.maxRunspeed) {
+						m.innerHTML = "On";
+						m.classList.add("on");
+						m.eff = true;
+					}
+					m.addEventListener("click", function (event) {
+						if (event.target.eff) {
+							event.target.eff = false;
+							event.target.classList.remove("on");
+							event.target.innerHTML = "Off";
+							SQUARIFIC.neuralCar.getSettings().maxRunspeed = false;
+						} else {
+							event.target.eff = true;
+							event.target.classList.add("on");
+							event.target.innerHTML = "On";
+							SQUARIFIC.neuralCar.getSettings().maxRunspeed = true;
+						}
+					});
+					
+					var m = document.getElementById('collision-input');
+					if (settings.collision) {
+						m.innerHTML = "On";
+						m.classList.add("on");
+						m.col = true;
+					}
+					m.addEventListener("click", function (event) {
+						if (event.target.col) {
+							event.target.col = false;
+							event.target.classList.remove("on");
+							event.target.innerHTML = "Off";
+							SQUARIFIC.neuralCar.getSettings().collision = false;
+						} else {
+							event.target.col = true;
+							event.target.classList.add("on");
+							event.target.innerHTML = "On";
+							SQUARIFIC.neuralCar.getSettings().collision = true;
+						}
+					});
+				}));
+			}
+		</script>
+	</head>
+	<body>
+		<script>
+		  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+		  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+		  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+		  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+		  ga('create', 'UA-30802449-2', 'auto');
+		</script>
+		<img style="display:none;" src="screens/neuralcar.png" alt="Neural Cars 2.0"/>
+		<center>
+			<div class="wrapper">
+				<canvas id="backCanvas">Your browser is not supported, please upgrade to a more modern browser.</canvas>
+				<canvas style="position:absolute; left:0; top:0;" id="frontCanvas">Your browser is not supported, please upgrade to a more modern browser.</canvas>
+			</div>
+		</center>
+		<div id="console">
+			 <br/>
+			The cars each have their own neural network. The top cars (blue) are copied randomly by the red cars and slightly mutated. When a car is in the top long enough it will retire and turn purple after which it will no longer change or be used to copy by other cars.
+			<br/><br/>
+			
+			
+			<br/><br/>
+			Logs:
+			<br/><br/>
+		</div>
+		<div id="changeSettings">
+			
+			<input id="runSpeed-input" class="setting-input" style="float:none; margin-top:5px;" value="1">
+			<div class="settings-goButton runSpeed-button" onclick="SQUARIFIC.neuralCar.runSpeed = parseFloat(document.getElementById('runSpeed-input').value) || 1; SQUARIFIC.neuralCar.console.log('New runspeed: ' + SQUARIFIC.neuralCar.runSpeed)">Set runspeed</div>
+			<div style="clear:both;"></div>
+			Max runspeed: <div id="maxRunspeed-input" class="setting-input-switch runSpeed-switch">Off</div>
+			<div style="clear:both;"></div>
+			Collision: <div id="collision-input" class="setting-input-switch runSpeed-switch">Off</div>
+		</div>
+		<div id="settings">
+			<a href="" style="text-decoration:none;"><div class=""></div></a>
+		</div>
+		<div style="clear:both;"></div>
+		<div class="projects">
+			
+		<script type="text/javascript">
+			startup();
+		</script>
+		<!-- Go to www.addthis.com/dashboard to customize your tools -->
+		<script type="text/javascript" src="//s7.addthis.com/js/300/addthis_widget.js#pubid=ra-53c4fbf2311fe8f1"></script>
+	</body>
+</html>
